@@ -58,14 +58,14 @@ void Cache::address_to_identifiers( uint32_t decimal_address){
     //std::cout << "current_address_tag = " << current_address_tag << std::endl;
 }
 
-uint32_t Cache::identifiers_to_address() {
+uint32_t Cache::identifiers_to_address(int tag, int index) {
     uint32_t address = 0;
 
     // Start with the tag
-    address = current_address_tag;
+    address = tag;
 
     // Add the index (reversing the division by num_set)
-    address = (address * num_set) + current_index;
+    address = (address * num_set) + index;
 
     // Add the block offset (reversing the division by block_size)
     address = (address * block_size) + current_block_offset;
@@ -160,6 +160,7 @@ bool Cache::get_address(char rw){
             }
             if(memory_map[current_index][block].dirty == 0 && rw == 'w'){
                 memory_map[current_index][block].dirty = 1;
+                //std::cout << "DIRTY SET " << hit_counter << std::endl;
             }
             
             memory_map[current_index][block].lru_count = assoc-1; // lru_count = MAX for MRU
@@ -174,11 +175,13 @@ bool Cache::get_address(char rw){
     //update_block();
 }
 
-uint32_t Cache::update_block(char rw, uint32_t addr){
+Cache::UpdateBlockStruct Cache::update_block(char rw, uint32_t addr){
     
-    //std::cout << "Updating the block" << std::endl;
+    //std::cout << "Updating the block addr: " << std::hex << addr << std::endl;
 
     uint32_t replaced_address = addr;
+    char next_rw = rw;
+    bool dirty = false;
 
     for(int block = 0; block < assoc; block++){
        
@@ -186,32 +189,40 @@ uint32_t Cache::update_block(char rw, uint32_t addr){
         // lru_count = MAX(=assoc-1) for mru
         if(memory_map[current_index][block].lru_count == 0){
 
-            if(memory_map[current_index][block].dirty == 1){
-               replaced_address = identifiers_to_address(); // to be given to next level of cache
+            if(memory_map[current_index][block].dirty == 0 && rw == 'r'){
+                next_rw = 'r';
                 memory_map[current_index][block].dirty = 0;
+                dirty = false;
+            }
+            else if(memory_map[current_index][block].dirty == 0 && rw == 'w'){
+                next_rw = 'r';
+                memory_map[current_index][block].dirty = 1;
+                dirty = false;
+            }
+            else if(memory_map[current_index][block].dirty == 1 && rw == 'r'){
+                next_rw = 'w';
+                replaced_address = identifiers_to_address(memory_map[current_index][block].tag, current_index); // to be given to next level of cache
+                memory_map[current_index][block].dirty = 0;
+                dirty = true;
+            }
+            else if(memory_map[current_index][block].dirty == 1 && rw == 'w'){
+                next_rw = 'w';
+                replaced_address = identifiers_to_address(memory_map[current_index][block].tag, current_index); // to be given to next level of cache
+                memory_map[current_index][block].dirty = 1;
+                dirty = true;
             }
 
             memory_map[current_index][block].valid = 1;
             memory_map[current_index][block].tag = current_address_tag;
             memory_map[current_index][block].lru_count = assoc-1;
-
-            // WB policy
-            if(rw == 'w'){
-            memory_map[current_index][block].dirty = 1;
-            }
-
+            //std::cout << std::hex << " repl_addr = " << replaced_address <<  " next_rw = " << next_rw << " curr_rw = " << rw << " dirty = " <<  memory_map[current_index][block].dirty << std::endl;
         }
         else{
             memory_map[current_index][block].lru_count--;
         }
     }
-    return replaced_address;
+    return {next_rw,replaced_address,dirty};
 }
-
-// TODO: Update the WBWA policy:
-// wr request to next level block followed by read request if dirty = 1
-// only read request to next level cache if dirty = 0 or valid = 0
-// no requests to next level cache if hit in current level cache
 
 void Cache::prefetch_init(){
     stream_buffers.resize(prefetch_num);
@@ -246,79 +257,100 @@ void Cache::print_prefetch_map(){
     }
 }
 
-
-bool Cache::search_stream_buffers(uint32_t target_address) {
-    // Keep track of the maximum lru_count for updating later
-    //std::cout << std::hex << target_address <<std::endl;
-    int max_lru_count = 0;
+bool Cache::search_stream_buffers(uint32_t target_address, bool hit_in_cache) {
+    // A pointer to the buffer we will ultimately update
+    StreamBuffer* buffer_to_update = nullptr;
     
-    // Sort a temporary vector of pointers to original buffers by recency
-    std::vector<StreamBuffer*> sorted_buffer_ptrs;
+    int old_lru_count;
+    // First, search for a hit in any of the existing buffers
+   // Create a temporary vector of pointers to valid buffers
+    std::vector<StreamBuffer*> sorted_valid_buffers;
     for (auto& buffer : stream_buffers) {
-        sorted_buffer_ptrs.push_back(&buffer);
-        if (buffer.valid && buffer.lru_count > max_lru_count) {
-            max_lru_count = buffer.lru_count;
+        if (buffer.valid) {
+            sorted_valid_buffers.push_back(&buffer);
         }
     }
-    std::sort(sorted_buffer_ptrs.begin(), sorted_buffer_ptrs.end(),
-        [](const StreamBuffer* a, const StreamBuffer* b) {
-            return a->lru_count > b->lru_count;
-        });
 
-    // 1. Search for a hit in existing valid buffers
-    for (StreamBuffer* buffer_ptr : sorted_buffer_ptrs) {
-        if (!buffer_ptr->valid) continue;
-        
+    // Sort the pointers by lru_count in descending order (MRU to LRU)
+    std::sort(sorted_valid_buffers.begin(), sorted_valid_buffers.end(),
+              [](const StreamBuffer* a, const StreamBuffer* b) {
+                  return a->lru_count > b->lru_count;
+              });
+    
+    // Search for a hit in the sorted list of valid buffers
+    for (StreamBuffer* buffer_ptr : sorted_valid_buffers) {
         auto& addresses = buffer_ptr->addresses;
         auto it = std::find(addresses.begin(), addresses.end(), target_address);
+        
         if (it != addresses.end()) {
-            // Hit found, update buffer
-            uint32_t last_address_in_buffer = 0;
-            if (it + 1 != addresses.end()) {
-                last_address_in_buffer = *(it + 1);
-            } else {
-                last_address_in_buffer = *it;
-            }
-            addresses.erase(addresses.begin(), it + 1);
-            size_t num_to_refill = prefetch_size - addresses.size();
-            for (size_t i = 0; i < num_to_refill; ++i) {
-                addresses.push_back(last_address_in_buffer + i);
-                //std::cout << std:: hex << "STREAM BUFFER_ADDR: " << last_address_in_buffer+i <<std::endl;
+            // Hit found. Update the buffer's contents.
+            uint32_t next_address_to_prefetch = addresses[prefetch_size-1]+1;
+            old_lru_count = buffer_ptr->lru_count;
+            
+            buffer_ptr->addresses.erase(addresses.begin(), it + 1);
+            
+            for (size_t i = 0; buffer_ptr->addresses.size() < prefetch_size; ++i) {
+                buffer_ptr->addresses.push_back(next_address_to_prefetch + i);
+                //std::cout << "STREAM HIT ADDR: " << next_address_to_prefetch + i << std::endl;
             }
             
-            // Update LRU counts
-            buffer_ptr->lru_count = max_lru_count + 1;
-            
-            return true; // Hit
+            buffer_to_update = buffer_ptr;
+            goto update_lru;
+        }
+    }
+
+    if(hit_in_cache == false){
+    
+        // Miss scenario: Search for an invalid or LRU buffer to replace
+        //int min_lru_count = prefetch_size; // Start with a value higher than max possible lru_count
+        bool found_invalid = false;
+
+        for (auto& buffer : stream_buffers) {
+            if (buffer.valid == false && buffer.lru_count == 0) {
+                // Found an invalid buffer, use it immediately
+                old_lru_count = 0;
+                buffer.lru_count = prefetch_size-1;
+                buffer_to_update = &buffer;
+                found_invalid = true;
+                break;
+            }
+        }
+
+
+        if(found_invalid == false){
+        for (auto& buffer : stream_buffers) {
+            if (buffer.lru_count == 0) {
+                buffer.lru_count = prefetch_size-1;
+                buffer_to_update = &buffer;
+            }
+        }
+        }
+        
+        // If a buffer was found (either invalid or LRU)
+        if (buffer_to_update) {
+            // Refill the selected buffer
+            buffer_to_update->valid = true;
+            buffer_to_update->addresses.clear();
+            for (unsigned int i = 0; i < prefetch_size; ++i) {
+                buffer_to_update->addresses.push_back(target_address + i + 1);
+                //std::cout << "STREAM MISS ADDR: " << target_address + i + 1 << std::endl;
+            }
         }
     }
     
-    // 2. No hit, so handle a new fetch
-    
-    // Find an invalid buffer first
-    for (StreamBuffer& buffer : stream_buffers) {
-        if (!buffer.valid) {
-            buffer.lru_count = max_lru_count + 1;
-            buffer.valid = true;
-            buffer.addresses.clear();
-            for (int i = 0; i < prefetch_size; ++i) {
-                buffer.addresses.push_back(target_address + i + 1);
-            //std::cout << std::hex << "STREAM BUFFER_INVALID_ADDR: " << target_address + i << std::endl;
+update_lru:
+    // This is the common LRU update logic for both hits and misses
+    if (buffer_to_update) {
+        // Decrement all buffers that are "newer" than the buffer being accessed/replaced
+        for (auto& buffer : stream_buffers) {
+            if (buffer.lru_count > old_lru_count) {
+                buffer.lru_count--;
             }
-            return false; // Miss, but a buffer was available
         }
+        // Make the accessed/replaced buffer the most recently used
+        buffer_to_update->lru_count = prefetch_num - 1;
+        return true; // Return true on hit, false on miss, needs refinement
     }
-    
-    // 3. No hit and no invalid buffers, so replace LRU buffer
-    StreamBuffer* lru_buffer = sorted_buffer_ptrs.back();
-    lru_buffer->lru_count = max_lru_count + 1;
-    lru_buffer->valid = true;
-    lru_buffer->addresses.clear();
-    for (int i = 0; i < prefetch_size; ++i) {
-        lru_buffer->addresses.push_back(target_address + i + 1);
-        //std::cout << std::hex << "STREAM BUFFER_REPL_ADDR: " << target_address + i << std::endl;
-    }
-    return false; // Miss, LRU buffer replaced
+
+    return false; // No buffer was updated (e.g., prefetch_num=0)
 }
-
-

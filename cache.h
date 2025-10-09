@@ -3,18 +3,22 @@
 
 class Cache{
     private:
+
+        int next_lru_tick = 0;
         // cache attributes
         int cache_size;
         int block_size;
         int assoc;
         int num_set; 
         int prefetch_num=0;
-        int prefetch_size=0;
+        unsigned int prefetch_size=0;
         
         // identifier bits
         int current_index;
         int current_block_offset;
         int current_address_tag;
+
+        char next_level;
 
         //counters
         static int hit_counter;
@@ -37,6 +41,13 @@ class Cache{
         std::vector<StreamBuffer> stream_buffers;
         
     public:
+
+        struct UpdateBlockStruct {
+        char rw;
+        uint32_t addr;
+        bool dirty;
+        };
+
         void set_size(int);
         void set_block_size(int);
         void set_assoc(int);
@@ -46,7 +57,7 @@ class Cache{
         void num_of_set();
 
         void address_to_identifiers(uint32_t);
-        uint32_t identifiers_to_address();
+        uint32_t identifiers_to_address(int, int);
 
         void display_identifiers();
 
@@ -54,11 +65,11 @@ class Cache{
         void print_memory_map();
 
         bool get_address(char);
-        uint32_t update_block(char, uint32_t);
+        Cache::UpdateBlockStruct update_block(char, uint32_t);
 
         void prefetch_init();
         void print_prefetch_map();
-        bool search_stream_buffers(uint32_t);
+        bool search_stream_buffers(uint32_t, bool);
 };
 
 #endif

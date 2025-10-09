@@ -5,4 +5,5 @@ example_trace.txt
 output
 main.cpp
 *.swp
+*.swo
 

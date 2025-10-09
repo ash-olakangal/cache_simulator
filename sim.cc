@@ -112,25 +112,45 @@ int main (int argc, char *argv[]) {
         ///////////////////////////////////////////////////////
         l1_cache.address_to_identifiers(addr);
 
-        if(l1_cache.get_address(rw) == false){ // send request to next level
-            if(params.PREF_N != 0 && params.L2_SIZE == 0){
-                l1_cache.search_stream_buffers(addr/params.BLOCKSIZE);
-                l1_cache.print_prefetch_map();
-            }
+
+        bool hit_in_l1_cache = l1_cache.get_address(rw);
+
+        if(params.PREF_N != 0 && params.L2_SIZE != 0){
+        l1_cache.search_stream_buffers(addr/params.BLOCKSIZE, hit_in_l1_cache);
+        }
+
+        if(hit_in_l1_cache == false){ // send request to next level
             if(params.L2_SIZE != 0){
-                //l2_cache.prefetch_stream(addr);
+                bool hit_in_l2_cache;
 
-                l2_cache.address_to_identifiers(l1_cache.update_block(rw, addr));
+                Cache::UpdateBlockStruct next_level = l1_cache.update_block(rw, addr);
 
-                if(l2_cache.get_address(rw) ==  false){
-                    if(params.PREF_N != 0){
-                        l2_cache.search_stream_buffers(addr);
-                    }
-                    l2_cache.update_block(rw, addr); // update block in l2
+
+                l2_cache.address_to_identifiers(next_level.addr);
+                hit_in_l2_cache = l2_cache.get_address(next_level.rw);
+
+                if(hit_in_l2_cache == false){
+                    l2_cache.update_block(next_level.rw, next_level.addr); // update block in l2
                 }
+                if(params.PREF_N != 0){
+                    l2_cache.search_stream_buffers(next_level.addr/params.BLOCKSIZE, hit_in_l2_cache);
+                }
+                
+
+                if(next_level.dirty == true){
+                    l2_cache.address_to_identifiers(addr);
+                    hit_in_l2_cache = l2_cache.get_address('r');
+                    if(hit_in_l2_cache == false)
+                    l2_cache.update_block('r', addr); // update block in l2
+                     if(params.PREF_N != 0){
+                        l2_cache.search_stream_buffers(addr/params.BLOCKSIZE, hit_in_l2_cache);
+                    }
+                }
+
             }
             else{
                 l1_cache.update_block(rw, addr);// update block in l1
+                                               // main memory counter here
             }
         }
    
