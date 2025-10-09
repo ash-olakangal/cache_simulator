@@ -213,58 +213,112 @@ uint32_t Cache::update_block(char rw, uint32_t addr){
 // only read request to next level cache if dirty = 0 or valid = 0
 // no requests to next level cache if hit in current level cache
 
-void Cache::prefetch_buffer_init(){
-    for(int block_num=0; block_num<prefetch_size; block_num++){
-        PrefetchStruct prefetch_init_block; // ISSUE TODO
-        prefetch_init_block.address = 0;
-        prefetch_init_block.valid = 0;
+void Cache::prefetch_init(){
+    stream_buffers.resize(prefetch_num);
+    int count=0;
+    for (auto& buffer : stream_buffers) {
+        buffer.valid = false;
+        buffer.addresses.resize(prefetch_size);
+        buffer.lru_count = count;
+        count++;
+    }
+}
+    
+void Cache::print_prefetch_map(){
 
-        for(int i=0; i<prefetch_num; i++){
-        prefetch_init_block.lru_count = i;
-        prefetch_memory_map[i].push_back(prefetch_init_block);
+    std::vector<StreamBuffer> sorted_buffers = stream_buffers;
+    
+    // Sort the buffers by lru_count in descending order (MRU first).
+    std::sort(sorted_buffers.begin(), sorted_buffers.end(), 
+        [](const StreamBuffer& a, const StreamBuffer& b) {
+            return a.lru_count > b.lru_count;
+        });
+
+    std::cout << "===== Stream Buffer(s) contents =====" << std::endl;
+    
+    for (const auto& buffer : sorted_buffers) {
+        if (buffer.valid) {
+            for (const auto& address : buffer.addresses) {
+                std::cout << std::hex << " " << address << " ";
+            }
+            std::cout << std::endl;
+        }
+    }
+}
+
+
+bool Cache::search_stream_buffers(uint32_t target_address) {
+    // Keep track of the maximum lru_count for updating later
+    //std::cout << std::hex << target_address <<std::endl;
+    int max_lru_count = 0;
+    
+    // Sort a temporary vector of pointers to original buffers by recency
+    std::vector<StreamBuffer*> sorted_buffer_ptrs;
+    for (auto& buffer : stream_buffers) {
+        sorted_buffer_ptrs.push_back(&buffer);
+        if (buffer.valid && buffer.lru_count > max_lru_count) {
+            max_lru_count = buffer.lru_count;
+        }
+    }
+    std::sort(sorted_buffer_ptrs.begin(), sorted_buffer_ptrs.end(),
+        [](const StreamBuffer* a, const StreamBuffer* b) {
+            return a->lru_count > b->lru_count;
+        });
+
+    // 1. Search for a hit in existing valid buffers
+    for (StreamBuffer* buffer_ptr : sorted_buffer_ptrs) {
+        if (!buffer_ptr->valid) continue;
+        
+        auto& addresses = buffer_ptr->addresses;
+        auto it = std::find(addresses.begin(), addresses.end(), target_address);
+        if (it != addresses.end()) {
+            // Hit found, update buffer
+            uint32_t last_address_in_buffer = 0;
+            if (it + 1 != addresses.end()) {
+                last_address_in_buffer = *(it + 1);
+            } else {
+                last_address_in_buffer = *it;
+            }
+            addresses.erase(addresses.begin(), it + 1);
+            size_t num_to_refill = prefetch_size - addresses.size();
+            for (size_t i = 0; i < num_to_refill; ++i) {
+                addresses.push_back(last_address_in_buffer + i);
+                //std::cout << std:: hex << "STREAM BUFFER_ADDR: " << last_address_in_buffer+i <<std::endl;
+            }
+            
+            // Update LRU counts
+            buffer_ptr->lru_count = max_lru_count + 1;
+            
+            return true; // Hit
         }
     }
     
-}
-
-void Cache::print_prefetch_map(){
-    auto iter = prefetch_memory_map.begin();
-
-    while(iter != prefetch_memory_map.end()) {
-        std::cout << "Buffer: " << iter->first << std::endl;
-        for (const auto& transaction : iter->second) {
-            std::cout << "\taddress: " << transaction.address
-                      << ", valid: " << transaction.valid
-                      << ", lru_count: " << transaction.lru_count << std::endl;
+    // 2. No hit, so handle a new fetch
+    
+    // Find an invalid buffer first
+    for (StreamBuffer& buffer : stream_buffers) {
+        if (!buffer.valid) {
+            buffer.lru_count = max_lru_count + 1;
+            buffer.valid = true;
+            buffer.addresses.clear();
+            for (int i = 0; i < prefetch_size; ++i) {
+                buffer.addresses.push_back(target_address + i + 1);
+            //std::cout << std::hex << "STREAM BUFFER_INVALID_ADDR: " << target_address + i << std::endl;
+            }
+            return false; // Miss, but a buffer was available
         }
-        iter++;
     }
+    
+    // 3. No hit and no invalid buffers, so replace LRU buffer
+    StreamBuffer* lru_buffer = sorted_buffer_ptrs.back();
+    lru_buffer->lru_count = max_lru_count + 1;
+    lru_buffer->valid = true;
+    lru_buffer->addresses.clear();
+    for (int i = 0; i < prefetch_size; ++i) {
+        lru_buffer->addresses.push_back(target_address + i + 1);
+        //std::cout << std::hex << "STREAM BUFFER_REPL_ADDR: " << target_address + i << std::endl;
+    }
+    return false; // Miss, LRU buffer replaced
 }
 
 
-void Cache::prefetch_stream(uint32_t address){
-   // get next 'M' addresses from main-memory when miss in cache
-   // init case - fill the buffer
-    for(int i=0; i<prefetch_num; i++){
-        for(int j=0; j<prefetch_size; j++){
-            if(prefetch_memory_map[i][j].valid == 0 && prefetch_memory_map[i][j].lru_count == 0){ //lru_count = 0 - LRU, MAX - MRU 
-                prefetch_memory_map[i][j].address = address+j;            
-                prefetch_memory_map[i][j].lru_count = prefetch_num-1;
-            }
-            else{
-                prefetch_memory_map[i][j].lru_count--;
-            }
-        }   
-    }
-    //for loop -> prefetch_size
-    //prefetch_memory_map[i].pop();
-    //prefetch_memory_map[i].push();
-
-    //for loop -> prefetch_size
-    //if(address exists in buffer)
-    //    //pop all including matched block 
-    //else
-    //    return
-    // pop case - pop the matches and push the next n addresses
-
-}

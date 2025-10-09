@@ -72,7 +72,6 @@ int main (int argc, char *argv[]) {
     l1_cache.set_assoc(params.L1_ASSOC);
     l1_cache.num_of_set();
     l1_cache.memory_map_init();
-    //l1_cache.prefetch_buffer_init();
     
     Cache l2_cache;
     if(params.L2_SIZE != 0){ // create L2 cache only when L2_SIZE is not 0
@@ -80,16 +79,22 @@ int main (int argc, char *argv[]) {
     l2_cache.set_size(params.L2_SIZE);
     l2_cache.set_assoc(params.L2_ASSOC);
     l2_cache.num_of_set();
-    l2_cache.set_prefetch_num(params.PREF_N);
-    l2_cache.set_prefetch_size(params.PREF_M);
-    l2_cache.memory_map_init();
-    //l2_cache.prefetch_buffer_init();
+        l2_cache.memory_map_init();
     }
-    else{
-    l1_cache.set_prefetch_num(params.PREF_N);
-    l1_cache.set_prefetch_size(params.PREF_M);
-    }
+    
 
+    if(params.PREF_N != 0){
+        if(params.L2_SIZE != 0){
+            l2_cache.set_prefetch_num(params.PREF_N);
+            l2_cache.set_prefetch_size(params.PREF_M);
+            l2_cache.prefetch_init();
+        }
+        else{
+            l1_cache.set_prefetch_num(params.PREF_N);
+            l1_cache.set_prefetch_size(params.PREF_M);
+            l1_cache.prefetch_init();
+        }
+    }
          
     // Read requests from the trace file and echo them back.
     while (fscanf(fp, "%c %x\n", &rw, &addr) == 2) {	// Stay in the loop if fscanf() successfully parsed two tokens as specified.
@@ -108,12 +113,19 @@ int main (int argc, char *argv[]) {
         l1_cache.address_to_identifiers(addr);
 
         if(l1_cache.get_address(rw) == false){ // send request to next level
+            if(params.PREF_N != 0 && params.L2_SIZE == 0){
+                l1_cache.search_stream_buffers(addr/params.BLOCKSIZE);
+                l1_cache.print_prefetch_map();
+            }
             if(params.L2_SIZE != 0){
                 //l2_cache.prefetch_stream(addr);
 
                 l2_cache.address_to_identifiers(l1_cache.update_block(rw, addr));
 
                 if(l2_cache.get_address(rw) ==  false){
+                    if(params.PREF_N != 0){
+                        l2_cache.search_stream_buffers(addr);
+                    }
                     l2_cache.update_block(rw, addr); // update block in l2
                 }
             }
@@ -121,6 +133,7 @@ int main (int argc, char *argv[]) {
                 l1_cache.update_block(rw, addr);// update block in l1
             }
         }
+   
     }
 
     std::cout << "===== L1 contents =====" << std::endl;
@@ -129,7 +142,15 @@ int main (int argc, char *argv[]) {
     if(params.L2_SIZE != 0){
     std::cout << "===== L2 contents =====" << std::endl;
     l2_cache.print_memory_map();
-    //l2_cache.print_prefetch_map();
+    }
+    
+    if(params.PREF_N != 0){
+        if(params.L2_SIZE != 0){
+            l2_cache.print_prefetch_map();
+        }
+        else{
+            l1_cache.print_prefetch_map();
+        }
     }
 
     return(0);

@@ -8,8 +8,8 @@ class Cache{
         int block_size;
         int assoc;
         int num_set; 
-        int prefetch_num;
-        int prefetch_size;
+        int prefetch_num=0;
+        int prefetch_size=0;
         
         // identifier bits
         int current_index;
@@ -27,15 +27,15 @@ class Cache{
             int tag;
         };
 
-        struct PrefetchStruct{
-            int address;
-            int valid;
+        struct StreamBuffer {
+            bool valid = false; // Initially invalid
             int lru_count;
+            std::vector<uint32_t> addresses;
         };
 
         std::map<int, std::vector<BlockStruct>> memory_map;
-        std::map<int, std::vector<PrefetchStruct>> prefetch_memory_map;
-
+        std::vector<StreamBuffer> stream_buffers;
+        
     public:
         void set_size(int);
         void set_block_size(int);
@@ -56,9 +56,9 @@ class Cache{
         bool get_address(char);
         uint32_t update_block(char, uint32_t);
 
-        void prefetch_buffer_init();
+        void prefetch_init();
         void print_prefetch_map();
-        void prefetch_stream(uint32_t);
+        bool search_stream_buffers(uint32_t);
 };
 
 #endif
