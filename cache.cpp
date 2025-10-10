@@ -1,8 +1,5 @@
 #include "cache.h"
 
-int Cache::hit_counter = 0;
-int Cache::miss_counter = 0;
-
 void Cache::set_size(int sim_size){
     cache_size = sim_size;
     //std::cout << "CACHE SIZE = " << cache_size << std::endl;
@@ -143,11 +140,16 @@ void Cache::print_memory_map() {
 
 bool Cache::get_address(char rw){
 
+    if(rw == 'r'){
+        read_req++;
+    }
+    else{
+        write_req++;
+    }
+
     for(int block=0; block<assoc; block++){
         BlockStruct get_mem_block = memory_map[current_index][block];
         if(get_mem_block.valid == 1 && get_mem_block.tag == current_address_tag){
-            hit_counter++;
-
             //std::cout << "HIT COUNTER: " << hit_counter << std::endl;
             
             for(int block_lru_update=0; block_lru_update<assoc; block_lru_update++){
@@ -168,7 +170,12 @@ bool Cache::get_address(char rw){
         }
     }
 
-    miss_counter++;
+    if(rw == 'r'){
+        read_misses++;
+    }
+    else{
+        write_misses++;
+    }
     //std::cout << "MISS COUNTER: " << miss_counter << std::endl;
 
     return false;
@@ -204,12 +211,14 @@ Cache::UpdateBlockStruct Cache::update_block(char rw, uint32_t addr){
                 replaced_address = identifiers_to_address(memory_map[current_index][block].tag, current_index); // to be given to next level of cache
                 memory_map[current_index][block].dirty = 0;
                 dirty = true;
+                writebacks_next_level++;
             }
             else if(memory_map[current_index][block].dirty == 1 && rw == 'w'){
                 next_rw = 'w';
                 replaced_address = identifiers_to_address(memory_map[current_index][block].tag, current_index); // to be given to next level of cache
                 memory_map[current_index][block].dirty = 1;
                 dirty = true;
+                writebacks_next_level++;
             }
 
             memory_map[current_index][block].valid = 1;
@@ -255,9 +264,10 @@ void Cache::print_prefetch_map(){
             std::cout << std::endl;
         }
     }
+    std::cout << std::dec << std::endl;
 }
 
-bool Cache::search_stream_buffers(uint32_t target_address, bool hit_in_cache) {
+bool Cache::search_stream_buffers(uint32_t target_address, bool hit_in_cache, char rw) {
     // A pointer to the buffer we will ultimately update
     StreamBuffer* buffer_to_update = nullptr;
     
@@ -283,6 +293,12 @@ bool Cache::search_stream_buffers(uint32_t target_address, bool hit_in_cache) {
         auto it = std::find(addresses.begin(), addresses.end(), target_address);
         
         if (it != addresses.end()) {
+            if(rw=='r' && hit_in_cache == false){
+            num_read_prefetch_hit++;
+            }
+            else if(rw=='w' && hit_in_cache == false){
+            num_write_prefetch_hit++;
+            }
             // Hit found. Update the buffer's contents.
             uint32_t next_address_to_prefetch = addresses[prefetch_size-1]+1;
             old_lru_count = buffer_ptr->lru_count;
@@ -291,6 +307,7 @@ bool Cache::search_stream_buffers(uint32_t target_address, bool hit_in_cache) {
             
             for (size_t i = 0; buffer_ptr->addresses.size() < prefetch_size; ++i) {
                 buffer_ptr->addresses.push_back(next_address_to_prefetch + i);
+                num_prefetch++;
                 //std::cout << "STREAM HIT ADDR: " << next_address_to_prefetch + i << std::endl;
             }
             
@@ -333,6 +350,7 @@ bool Cache::search_stream_buffers(uint32_t target_address, bool hit_in_cache) {
             buffer_to_update->addresses.clear();
             for (unsigned int i = 0; i < prefetch_size; ++i) {
                 buffer_to_update->addresses.push_back(target_address + i + 1);
+                num_prefetch++;
                 //std::cout << "STREAM MISS ADDR: " << target_address + i + 1 << std::endl;
             }
         }

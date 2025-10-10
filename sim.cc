@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <iomanip>
 
 #include <iostream>
 #include <vector>
@@ -115,8 +116,8 @@ int main (int argc, char *argv[]) {
 
         bool hit_in_l1_cache = l1_cache.get_address(rw);
 
-        if(params.PREF_N != 0 && params.L2_SIZE != 0){
-        l1_cache.search_stream_buffers(addr/params.BLOCKSIZE, hit_in_l1_cache);
+        if(params.PREF_N != 0 && params.L2_SIZE == 0){
+        l1_cache.search_stream_buffers(addr/params.BLOCKSIZE, hit_in_l1_cache, rw);
         }
 
         if(hit_in_l1_cache == false){ // send request to next level
@@ -131,19 +132,25 @@ int main (int argc, char *argv[]) {
 
                 if(hit_in_l2_cache == false){
                     l2_cache.update_block(next_level.rw, next_level.addr); // update block in l2
+                    if(next_level.rw == 'r'){
+                        l2_cache.read_misses_next_level++;
+                    
+                    }
                 }
                 if(params.PREF_N != 0){
-                    l2_cache.search_stream_buffers(next_level.addr/params.BLOCKSIZE, hit_in_l2_cache);
+                    l2_cache.search_stream_buffers(next_level.addr/params.BLOCKSIZE, hit_in_l2_cache, next_level.rw);
                 }
                 
 
                 if(next_level.dirty == true){
                     l2_cache.address_to_identifiers(addr);
                     hit_in_l2_cache = l2_cache.get_address('r');
-                    if(hit_in_l2_cache == false)
-                    l2_cache.update_block('r', addr); // update block in l2
+                    if(hit_in_l2_cache == false){
+                        l2_cache.update_block('r', addr); // update block in l2
+                        l2_cache.read_misses_next_level++;
+                    }
                      if(params.PREF_N != 0){
-                        l2_cache.search_stream_buffers(addr/params.BLOCKSIZE, hit_in_l2_cache);
+                        l2_cache.search_stream_buffers(addr/params.BLOCKSIZE, hit_in_l2_cache, 'r');
                     }
                 }
 
@@ -172,6 +179,35 @@ int main (int argc, char *argv[]) {
             l1_cache.print_prefetch_map();
         }
     }
+
+    float l1_miss_rate = static_cast<float>(l1_cache.read_misses - l1_cache.num_read_prefetch_hit + l1_cache.write_misses - l1_cache.num_write_prefetch_hit)/(l1_cache.read_req + l1_cache.write_req);
+    float l2_miss_rate = 0;
+
+    int memory_traffic = l1_cache.read_misses - l1_cache.num_read_prefetch_hit + l1_cache.write_misses - l1_cache.num_write_prefetch_hit + l1_cache.writebacks_next_level + l1_cache.num_prefetch;
+
+    if(params.L2_SIZE !=0){
+        l2_miss_rate = static_cast<float>(l2_cache.read_misses - l2_cache.num_read_prefetch_hit)/l2_cache.read_req;
+        memory_traffic = l2_cache.read_misses - l2_cache.num_read_prefetch_hit + 0 + l2_cache.write_misses - l2_cache.num_write_prefetch_hit + l2_cache.writebacks_next_level + l2_cache.num_prefetch;
+    }
+
+    std::cout << "===== Measurements =====" << std::endl;
+    std::cout << "a. L1 reads:                   " << l1_cache.read_req << std::endl;
+    std::cout << "b. L1 read misses:             " << l1_cache.read_misses - l1_cache.num_read_prefetch_hit << std::endl; 
+    std::cout << "c. L1 writes:                  " << l1_cache.write_req << std::endl;
+    std::cout << "d. L1 write misses:            " << l1_cache.write_misses - l1_cache.num_write_prefetch_hit << std::endl;
+          printf("e. L1 miss rate:               %0.4f\n", l1_miss_rate);
+    std::cout << "f. L1 writebacks:              " << l1_cache.writebacks_next_level << std::endl;
+    std::cout << "g. L1 prefetches:              " << l1_cache.num_prefetch << std::endl;
+    std::cout << "h. L2 reads (demand):          " << l2_cache.read_req << std::endl;
+    std::cout << "i. L2 read misses (demand):    " << l2_cache.read_misses - l2_cache.num_read_prefetch_hit << std::endl;
+    std::cout << "j. L2 reads (prefetch):        " << 0 << std::endl;
+    std::cout << "k. L2 read misses (prefetch):  " << 0 << std::endl;
+    std::cout << "l. L2 writes:                  " << l2_cache.write_req << std::endl;
+    std::cout << "m. L2 write misses:            " << l2_cache.write_misses - l2_cache.num_write_prefetch_hit << std::endl;
+          printf("n. L2 miss rate:               %0.4f\n", l2_miss_rate);
+    std::cout << "o. L2 writebacks:              " << l2_cache.writebacks_next_level << std::endl;
+    std::cout << "p. L2 prefetches:              " << l2_cache.num_prefetch << std::endl;
+    std::cout << "q. memory traffic:             " << memory_traffic << std::endl;
 
     return(0);
 }

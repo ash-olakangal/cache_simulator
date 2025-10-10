@@ -20,10 +20,6 @@ class Cache{
 
         char next_level;
 
-        //counters
-        static int hit_counter;
-        static int miss_counter;
-
         struct BlockStruct{
             int valid;
             int dirty;
@@ -69,7 +65,18 @@ class Cache{
 
         void prefetch_init();
         void print_prefetch_map();
-        bool search_stream_buffers(uint32_t, bool);
+        bool search_stream_buffers(uint32_t, bool, char);
+
+        //statistics variables
+        int read_req=0;
+        int read_misses_next_level=0;
+        int read_misses=0;
+        int write_req=0;
+        int write_misses=0;
+        int writebacks_next_level=0;
+        int num_prefetch=0;
+        int num_read_prefetch_hit=0;
+        int num_write_prefetch_hit=0;
 };
 
 #endif
