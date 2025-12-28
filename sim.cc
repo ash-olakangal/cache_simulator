@@ -190,6 +190,7 @@ int main (int argc, char *argv[]) {
         memory_traffic = l2_cache.read_misses - l2_cache.num_read_prefetch_hit + 0 + l2_cache.write_misses - l2_cache.num_write_prefetch_hit + l2_cache.writebacks_next_level + l2_cache.num_prefetch;
     }
 
+
     std::cout << "===== Measurements =====" << std::endl;
     std::cout << "a. L1 reads:                   " << l1_cache.read_req << std::endl;
     std::cout << "b. L1 read misses:             " << l1_cache.read_misses - l1_cache.num_read_prefetch_hit << std::endl; 

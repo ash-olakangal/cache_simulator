@@ -77,6 +77,7 @@ class Cache{
         int num_prefetch=0;
         int num_read_prefetch_hit=0;
         int num_write_prefetch_hit=0;
+        int memory_req=0;
 };
 
 #endif
